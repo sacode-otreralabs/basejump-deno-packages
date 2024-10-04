@@ -19,7 +19,7 @@ type REQUIRE_AUTHORIZED_BILLING_USER_OPTIONS = {
     accountId: string;
     authorizedRoles: string[];
     onBillingDisabled?: () => Promise<Response>;
-    onUnauthorized?: () => Promise<Response>;
+    onUnauthorized?: (reason: string) => Promise<Response>;
     onBillableAndAuthorized?: (
         roleInfo: AUTHORIZED_BILLING_USER_INFO
     ) => Promise<Response>;
@@ -33,39 +33,36 @@ export async function requireAuthorizedBillingUser(
     try {
         const authToken = req.headers.get("Authorization");
         const accountId = options.accountId;
-        // we don't have what we need. instant block.
+        
         if (!authToken || !accountId) {
+            const reason = !authToken ? "Missing authorization token" : "Missing account ID";
             if (options.onUnauthorized) {
-                return await options.onUnauthorized();
+                return await options.onUnauthorized(reason);
             }
-            return errorResponse("Unauthorized", 401);
+            return errorResponse(`Unauthorized: ${reason}`, 401);
         }
-
 
         const supabase = createSupabaseClient(authToken);
         const {data, error} = await supabase.rpc("get_account_billing_status", {
             account_id: options.accountId,
         }) as {data: AUTHORIZED_BILLING_USER_INFO | null; error: any};
 
-
-
-        // means this user isn't a member of this account, block
         if (!data || error) {
+            const reason = "User is not a member of this account";
             if (options.onUnauthorized) {
-                return await options.onUnauthorized();
+                return await options.onUnauthorized(reason);
             }
-            return errorResponse("Unauthorized", 401);
+            return errorResponse(`Unauthorized: ${reason}`, 401);
         }
 
-        // means this user is a member of this account, but not the right role, block
         if (!options.authorizedRoles.includes(data.account_role)) {
+            const reason = `User role '${data.account_role}' is not authorized`;
             if (options.onUnauthorized) {
-                return await options.onUnauthorized();
+                return await options.onUnauthorized(reason);
             }
-            return errorResponse("Unauthorized", 401);
+            return errorResponse(`Unauthorized: ${reason}`, 401);
         }
 
-        // means this user is a member of this account, but billing is disabled, just return a generic response
         if (!data.billing_enabled) {
             if (options.onBillingDisabled) {
                 return await options.onBillingDisabled();
@@ -73,6 +70,7 @@ export async function requireAuthorizedBillingUser(
             return new Response(
                 JSON.stringify({
                     billing_enabled: false,
+                    message: "Billing is disabled for this account"
                 }),
                 {
                     headers: {
@@ -86,14 +84,12 @@ export async function requireAuthorizedBillingUser(
             return errorResponse("Config error: No onBillableAndAuthorized function passed in", 400);
         }
 
-        // means this user is a member of this account, and has the right role, allow
-        return await options.onBillableAndAuthorized?.(data);
+        return await options.onBillableAndAuthorized(data);
     } catch (e) {
-        // something went wrong, throw an error
         if (options.onError) {
             return options.onError(e);
         } else {
-            return errorResponse("Internal Error", 500);
+            return errorResponse(`Internal Error: ${e.message}`, 500);
         }
     }
 }
