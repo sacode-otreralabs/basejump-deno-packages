@@ -51,6 +51,22 @@ type GET_BILLING_STATUS_ARGS = {
     subscriptionId?: string;
 };
 
+type GET_PRODUCTS_RESPONSE = Array<{
+  id: string;
+  name: string;
+  description?: string;
+  prices: Array<{
+    id: string;
+    nickname?: string;
+    unit_amount: number;
+    currency: string;
+    recurring?: {
+      interval: "month" | "year";
+      interval_count: number;
+    };
+  }>;
+}>;
+
 type GENERIC_URL_RESPONSE = {
     url: string;
 };
@@ -81,6 +97,7 @@ export type BILLING_FUNCTION_WRAPPER_HANDLERS = {
     getBillingStatus: (
         args: GET_BILLING_STATUS_ARGS
     ) => Promise<BASEJUMP_BILLING_DATA_UPSERT>;
+    getProducts: () => Promise<GET_PRODUCTS_RESPONSE>;
 };
 
 export function billingFunctionsWrapper(
@@ -137,36 +154,45 @@ export function billingFunctionsWrapper(
                             );
                         },
                     });
+                case "get_products":
+                  const products = await handlers.getProducts();
+                  return new Response(JSON.stringify(products), {
+                    headers: {
+                      ...corsHeaders,
+                      "Content-Type": "application/json",
+                    },
+                  });
+        
                 case "get_new_subscription_url":
-                    if (!validateUrl(body.args.success_url, options.allowedURLs) || !validateUrl(body.args.cancel_url, options.allowedURLs)) {
-                        return errorResponse("Success or cancel url is not allowed");
-                    }
-                    return await requireAuthorizedBillingUser(req, {
-                        accountId: body.args.account_id,
-                        authorizedRoles: ["owner"],
-                        async onBillableAndAuthorized(roleInfo) {
-                            const response = await handlers.getNewSubscriptionUrl({
-                                accountId: roleInfo.account_id,
-                                planId: body.args.plan_id,
-                                successUrl: body.args.success_url,
-                                cancelUrl: body.args.cancel_url,
-                                billingEmail: roleInfo.billing_email,
-                                customerId: roleInfo.billing_customer_id,
-                            });
-                            return new Response(
-                                JSON.stringify({
-                                    billing_enabled: roleInfo.billing_enabled,
-                                    ...response,
-                                }),
-                                {
-                                    headers: {
-                                        ...corsHeaders,
-                                        "Content-Type": "application/json",
-                                    },
-                                }
-                            );
-                        },
-                    });
+                  if (!validateUrl(body.args.success_url, options.allowedURLs) || !validateUrl(body.args.cancel_url, options.allowedURLs)) {
+                    return errorResponse("Success or cancel url is not allowed");
+                  }
+                  return await requireAuthorizedBillingUser(req, {
+                    accountId: body.args.account_id,
+                    authorizedRoles: ["owner"],
+                    async onBillableAndAuthorized(roleInfo) {
+                      const response = await handlers.getNewSubscriptionUrl({
+                        accountId: roleInfo.account_id,
+                        priceId: body.args.price_id, // Changed from planId to priceId
+                        successUrl: body.args.success_url,
+                        cancelUrl: body.args.cancel_url,
+                        billingEmail: roleInfo.billing_email,
+                        customerId: roleInfo.billing_customer_id,
+                      });
+                      return new Response(
+                        JSON.stringify({
+                          billing_enabled: roleInfo.billing_enabled,
+                          ...response,
+                        }),
+                        {
+                          headers: {
+                            ...corsHeaders,
+                            "Content-Type": "application/json",
+                          },
+                        }
+                      );
+                    },
+                  });
 
                 case "get_billing_status":
                     return await requireAuthorizedBillingUser(req, {
